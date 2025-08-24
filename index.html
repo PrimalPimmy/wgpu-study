@@ -1,0 +1,27 @@
+<!DOCTYPE html>
+<html lang="en">
+
+    <head>
+        <meta charset="UTF-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <link data-trunk rel="rust" data-bin="bin" />    
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Learn WGPU</title>
+        <style>
+        canvas {
+        background-color: rgb(232, 149, 149);
+        }
+        </style>
+    </head>
+
+    <body id="wasm-example">
+        <canvas id="canvas" width="800" height="600"></canvas>
+  <script type="module">
+      import init from "./pkg/gravity.js";
+      init().then(() => {
+          console.log("WASM Loaded");
+      });
+  </script>
+</body>
+
+</html>
