@@ -809,6 +809,7 @@ dependencies = [
  "console_error_panic_hook",
  "console_log",
  "env_logger",
+ "glam",
  "log",
  "pollster",
  "wasm-bindgen",

@@ -1,6 +1,6 @@
 use std::{iter, sync::Arc};
 
-
+use glam::Mat4;
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
@@ -20,12 +20,6 @@ struct Vertex {
     color: [f32; 3],
 }
 
- const VERTICES: &[Vertex] = &[
-    Vertex { position: [0.0, 0.5, 0.0], color: [1.0, 0.0, 0.0] },
-    Vertex { position: [-0.5, -0.5, 0.0], color: [0.0, 1.0, 0.0] },
-    Vertex { position: [0.5, -0.5, 0.0], color: [0.0, 0.0, 1.0] },
-];
-
 pub struct State {
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -35,8 +29,9 @@ pub struct State {
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
     index_buffer: wgpu::Buffer,
-    // num_vertices: u32,
     num_indices: u32,
+    uniform_buffer: wgpu::Buffer,
+    uniform_bind_group: wgpu::BindGroup,
     window: Arc<Window>,
 }
 
@@ -44,8 +39,6 @@ impl State {
     async fn new(window: Arc<Window>) -> anyhow::Result<State> {
         let size = window.inner_size();
 
-        // The instance is a handle to our GPU
-        // BackendBit::PRIMARY => Vulkan + Metal + DX12 + Browser WebGPU
         let instance = wgpu::util::new_instance_with_webgpu_detection(&wgpu::InstanceDescriptor {
             #[cfg(not(target_arch = "wasm32"))]
             backends: wgpu::Backends::PRIMARY,
@@ -54,7 +47,6 @@ impl State {
             ..Default::default()
         })
         .await;
-
 
         let surface = instance.create_surface(window.clone()).unwrap();
 
@@ -70,8 +62,6 @@ impl State {
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
                 required_features: wgpu::Features::empty(),
-                // WebGL doesn't support all of wgpu's features, so if
-                // we're building for the web we'll have to disable some.
                 required_limits: if cfg!(target_arch = "wasm32") {
                     wgpu::Limits::downlevel_webgl2_defaults()
                 } else {
@@ -83,10 +73,6 @@ impl State {
             .await?;
 
         let surface_caps = surface.get_capabilities(&adapter);
-
-        // Shader code in this tutorial assumes an Srgb surface texture. Using a different
-        // one will result all the colors comming out darker. If you want to support non
-        // Srgb surfaces, you'll need to account for that when drawing to the frame.
         let surface_format = surface_caps
             .formats
             .iter()
@@ -106,10 +92,41 @@ impl State {
 
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
 
+        let projection = create_projection_matrix(size.width, size.height);
+        let uniform_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Uniform Buffer"),
+            contents: bytemuck::cast_slice(&[projection]),
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let uniform_bind_group_layout =
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::VERTEX,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                }],
+                label: Some("uniform_bind_group_layout"),
+            });
+
+        let uniform_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            layout: &uniform_bind_group_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform_buffer.as_entire_binding(),
+            }],
+            label: Some("uniform_bind_group"),
+        });
+
         let render_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Render Pipeline Layout"),
-                bind_group_layouts: &[],
+                bind_group_layouts: &[&uniform_bind_group_layout],
                 push_constant_ranges: &[],
             });
 
@@ -118,65 +135,51 @@ impl State {
             layout: Some(&render_pipeline_layout),
             vertex: wgpu::VertexState {
                 module: &shader,
-                entry_point: Some("vs_main"), // 1.
-                buffers: &[
-                    Vertex::desc(),
-                ],                 // 2.
+                entry_point: Some("vs_main"),
+                buffers: &[Vertex::desc()],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                // 3.
                 module: &shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    // 4.
                     format: config.format,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
-
             primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList, // 1.
+                topology: wgpu::PrimitiveTopology::TriangleList,
                 strip_index_format: None,
-                front_face: wgpu::FrontFace::Ccw, // 2.
+                front_face: wgpu::FrontFace::Ccw,
                 cull_mode: Some(wgpu::Face::Back),
-                // Setting this to anything other than Fill requires Features::NON_FILL_POLYGON_MODE
                 polygon_mode: wgpu::PolygonMode::Fill,
-                // Requires Features::DEPTH_CLIP_CONTROL
                 unclipped_depth: false,
-                // Requires Features::CONSERVATIVE_RASTERIZATION
                 conservative: false,
             },
-
-            depth_stencil: None, // 1.
+            depth_stencil: None,
             multisample: wgpu::MultisampleState {
-                count: 1,                         // 2.
-                mask: !0,                         // 3.
-                alpha_to_coverage_enabled: false, // 4.
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
             },
-            multiview: None, // 5.
-            cache: None,     // 6.
+            multiview: None,
+            cache: None,
         });
 
-
-    let (vertices, indices) = circle_filled_vertices(0.3, 100, [1.0, 0.0, 0.0]);
-
-    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-      label: Some("Circle Vertex Buffer"),
-        contents: bytemuck::cast_slice(&vertices),
-        usage: wgpu::BufferUsages::VERTEX,
-    });
-
-    let num_indices = indices.len() as u32;
-
-    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-        label: Some("Circle Index Buffer"),
-        contents: bytemuck::cast_slice(&indices),
-        usage: wgpu::BufferUsages::INDEX,
-    });
-
+        let (vertices, indices) = circle_filled_vertices(100, [1.0, 0.0, 0.0]);
+        let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Circle Vertex Buffer"),
+            contents: bytemuck::cast_slice(&vertices),
+            usage: wgpu::BufferUsages::VERTEX,
+        });
+        let num_indices = indices.len() as u32;
+        let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Circle Index Buffer"),
+            contents: bytemuck::cast_slice(&indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
 
         Ok(Self {
             surface,
@@ -187,8 +190,9 @@ impl State {
             render_pipeline,
             vertex_buffer,
             index_buffer,
-            // num_vertices,
             num_indices,
+            uniform_buffer,
+            uniform_bind_group,
             window,
         })
     }
@@ -199,6 +203,13 @@ impl State {
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
             self.is_surface_configured = true;
+
+            let projection = create_projection_matrix(width, height);
+            self.queue.write_buffer(
+                &self.uniform_buffer,
+                0,
+                bytemuck::cast_slice(&[projection]),
+            );
         }
     }
 
@@ -206,8 +217,6 @@ impl State {
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         self.window.request_redraw();
-
-        // We can't render unless the surface is configured
         if !self.is_surface_configured {
             return Ok(());
         }
@@ -216,7 +225,6 @@ impl State {
         let view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor::default());
-
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -244,17 +252,15 @@ impl State {
                 occlusion_query_set: None,
                 timestamp_writes: None,
             });
-            // NEW!
             render_pass.set_pipeline(&self.render_pipeline);
-            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..)); // 2.
+            render_pass.set_bind_group(0, &self.uniform_bind_group, &[]);
+            render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
-            // render_pass.set_viewport(0.0, 0.0, 800.0, 600.0, 0.0, 0.0);
         }
 
         self.queue.submit(iter::once(encoder.finish()));
         output.present();
-
         Ok(())
     }
 
@@ -287,44 +293,34 @@ impl App {
 impl ApplicationHandler<State> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         #[allow(unused_mut)]
-        let mut window_attributes = Window::default_attributes();
-
+        let mut window_attributes = Window::default_attributes().with_inner_size(winit::dpi::PhysicalSize::new(800, 600));
         #[cfg(target_arch = "wasm32")]
         {
             use wasm_bindgen::JsCast;
             use winit::platform::web::WindowAttributesExtWebSys;
-
             const CANVAS_ID: &str = "canvas";
-
             let window = wgpu::web_sys::window().unwrap_throw();
             let document = window.document().unwrap_throw();
             let canvas = document.get_element_by_id(CANVAS_ID).unwrap_throw();
             let html_canvas_element = canvas.unchecked_into();
             window_attributes = window_attributes.with_canvas(Some(html_canvas_element));
         }
-
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
-
         #[cfg(not(target_arch = "wasm32"))]
         {
-            // If we are not on web we can use pollster to
-            // await the
             self.state = Some(pollster::block_on(State::new(window)).unwrap());
         }
-
         #[cfg(target_arch = "wasm32")]
         {
             if let Some(proxy) = self.proxy.take() {
                 wasm_bindgen_futures::spawn_local(async move {
-                    assert!(
-                        proxy
-                            .send_event(
-                                State::new(window)
-                                    .await
-                                    .expect("Unable to create canvas!!!")
-                            )
-                            .is_ok()
-                    )
+                    assert!(proxy
+                        .send_event(
+                            State::new(window)
+                                .await
+                                .expect("Unable to create canvas!!!")
+                        )
+                        .is_ok())
                 });
             }
         }
@@ -353,7 +349,6 @@ impl ApplicationHandler<State> for App {
             Some(canvas) => canvas,
             None => return,
         };
-
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => state.resize(size.width, size.height),
@@ -361,7 +356,6 @@ impl ApplicationHandler<State> for App {
                 state.update();
                 match state.render() {
                     Ok(_) => {}
-                    // Reconfigure the surface if it's lost or outdated
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                         let size = state.window.inner_size();
                         state.resize(size.width, size.height);
@@ -399,14 +393,12 @@ pub fn run() -> anyhow::Result<()> {
     {
         console_log::init_with_level(log::Level::Info).unwrap_throw();
     }
-
     let event_loop = EventLoop::with_user_event().build()?;
     let mut app = App::new(
         #[cfg(target_arch = "wasm32")]
         &event_loop,
     );
     event_loop.run_app(&mut app)?;
-
     Ok(())
 }
 
@@ -415,17 +407,14 @@ pub fn run() -> anyhow::Result<()> {
 pub fn run_web() -> Result<(), wasm_bindgen::JsValue> {
     console_error_panic_hook::set_once();
     run().unwrap_throw();
-
     Ok(())
 }
 
 impl Vertex {
     const ATTRIBS: [wgpu::VertexAttribute; 2] =
         wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
-
     fn desc() -> wgpu::VertexBufferLayout<'static> {
         use std::mem;
-
         wgpu::VertexBufferLayout {
             array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
             step_mode: wgpu::VertexStepMode::Vertex,
@@ -436,36 +425,47 @@ impl Vertex {
 
 const G: f64 = 6.67430e-11;
 const C: f64 = 299792458.0;
-const MASS: f64 = 1.0;
+const MASS: f64 = 1.989e30; // Mass of the sun
 
-
-fn circle_filled_vertices(radius: f32, segments: usize, color: [f32; 3]) -> (Vec<Vertex>, Vec<u16>) {
+fn circle_filled_vertices(segments: usize, color: [f32; 3]) -> (Vec<Vertex>, Vec<u16>) {
     assert!(segments >= 3);
-    let radius = (2.0 * G * MASS) / (C * C);
+    let radius = (2.0 * G * MASS) / (C * C); // Schwarzschild radius
     let mut verts = Vec::with_capacity(segments + 1);
     let mut indices = Vec::with_capacity(segments * 3);
 
-    // center
-    verts.push(Vertex { position: [0.0, 0.0, 0.0], color });
+    verts.push(Vertex {
+        position: [0.0, 0.0, 0.0],
+        color,
+    });
 
-    // perimeter
     for i in 0..segments {
-    let angle: f64 = 2.0f64 * std::f64::consts::PI * (i as f64) / (segments as f64);
-    let x64: f64 = (radius as f64) * angle.cos();
-    let y64: f64 = (radius as f64) * angle.sin();
-    let x: f32 = x64 as f32;
-    let y: f32 = y64 as f32;
-       
-        verts.push(Vertex { position: [x, y, 0.0], color });
+        let angle = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
+        let x = radius * angle.cos();
+        let y = radius * angle.sin();
+        verts.push(Vertex {
+            position: [x as f32, y as f32, 0.0],
+            color,
+        });
     }
 
-    // triangles (0, i, i+1)
     for i in 1..segments {
         indices.extend_from_slice(&[0u16, i as u16, (i as u16) + 1]);
     }
-    // close the fan
     indices.extend_from_slice(&[0u16, segments as u16, 1u16]);
 
     (verts, indices)
+}
+
+fn create_projection_matrix(width: u32, height: u32) -> Mat4 {
+    let aspect_ratio = width as f32 / height as f32;
+    let radius = (2.0 * G * MASS) / (C * C) * 2.0; // 200% smaller
+    Mat4::orthographic_rh(
+        -radius as f32 * aspect_ratio,
+        radius as f32 * aspect_ratio,
+        -radius as f32,
+        radius as f32,
+        -1.0,
+        1.0,
+    )
 }
 
