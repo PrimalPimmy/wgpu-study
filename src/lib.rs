@@ -34,7 +34,9 @@ pub struct State {
     is_surface_configured: bool,
     render_pipeline: wgpu::RenderPipeline,
     vertex_buffer: wgpu::Buffer,
-    num_vertices: u32,
+    index_buffer: wgpu::Buffer,
+    // num_vertices: u32,
+    num_indices: u32,
     window: Arc<Window>,
 }
 
@@ -53,7 +55,6 @@ impl State {
         })
         .await;
 
-            let num_vertices = VERTICES.len() as u32;
 
         let surface = instance.create_surface(window.clone()).unwrap();
 
@@ -159,13 +160,23 @@ impl State {
             cache: None,     // 6.
         });
 
-    let vertex_buffer = device.create_buffer_init(
-    &wgpu::util::BufferInitDescriptor {
-        label: Some("Vertex Buffer"),
-        contents: bytemuck::cast_slice(VERTICES),
+
+    let (vertices, indices) = circle_filled_vertices(0.3, 100, [1.0, 0.0, 0.0]);
+
+    let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+      label: Some("Circle Vertex Buffer"),
+        contents: bytemuck::cast_slice(&vertices),
         usage: wgpu::BufferUsages::VERTEX,
-        }
-    );
+    });
+
+    let num_indices = indices.len() as u32;
+
+    let index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("Circle Index Buffer"),
+        contents: bytemuck::cast_slice(&indices),
+        usage: wgpu::BufferUsages::INDEX,
+    });
+
 
         Ok(Self {
             surface,
@@ -175,7 +186,9 @@ impl State {
             is_surface_configured: false,
             render_pipeline,
             vertex_buffer,
-            num_vertices,
+            index_buffer,
+            // num_vertices,
+            num_indices,
             window,
         })
     }
@@ -234,7 +247,9 @@ impl State {
             // NEW!
             render_pass.set_pipeline(&self.render_pipeline);
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..)); // 2.
-            render_pass.draw(0..self.num_vertices, 0..1);
+            render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+            // render_pass.set_viewport(0.0, 0.0, 800.0, 600.0, 0.0, 0.0);
         }
 
         self.queue.submit(iter::once(encoder.finish()));
@@ -418,3 +433,39 @@ impl Vertex {
         }
     }
 }
+
+const G: f64 = 6.67430e-11;
+const C: f64 = 299792458.0;
+const MASS: f64 = 1.0;
+
+
+fn circle_filled_vertices(radius: f32, segments: usize, color: [f32; 3]) -> (Vec<Vertex>, Vec<u16>) {
+    assert!(segments >= 3);
+    let radius = (2.0 * G * MASS) / (C * C);
+    let mut verts = Vec::with_capacity(segments + 1);
+    let mut indices = Vec::with_capacity(segments * 3);
+
+    // center
+    verts.push(Vertex { position: [0.0, 0.0, 0.0], color });
+
+    // perimeter
+    for i in 0..segments {
+    let angle: f64 = 2.0f64 * std::f64::consts::PI * (i as f64) / (segments as f64);
+    let x64: f64 = (radius as f64) * angle.cos();
+    let y64: f64 = (radius as f64) * angle.sin();
+    let x: f32 = x64 as f32;
+    let y: f32 = y64 as f32;
+       
+        verts.push(Vertex { position: [x, y, 0.0], color });
+    }
+
+    // triangles (0, i, i+1)
+    for i in 1..segments {
+        indices.extend_from_slice(&[0u16, i as u16, (i as u16) + 1]);
+    }
+    // close the fan
+    indices.extend_from_slice(&[0u16, segments as u16, 1u16]);
+
+    (verts, indices)
+}
+
