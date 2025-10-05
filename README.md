@@ -10,7 +10,7 @@ I'll update more details on the process soon :D
 
 ## PHASE 2: The Circle
 
-![alt text](image.png)
+![alt text](assets/image.png)
 
 I created a circle by using a triangle fan. A triangle fan is a series of triangles that all share a central vertex. By creating enough triangles, the shape will appear to be a circle.
 
