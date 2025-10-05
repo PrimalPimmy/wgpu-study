@@ -10,13 +10,15 @@ I'll update more details on the process soon :D
 
 ## PHASE 2: The Circle
 
+![alt text](image.png)
+
 I created a circle by using a triangle fan. A triangle fan is a series of triangles that all share a central vertex. By creating enough triangles, the shape will appear to be a circle.
 
 The radius of the circle is calculated using the Schwarzschild radius formula, which is used to determine the radius of the event horizon of a non-rotating, uncharged black hole. The formula is `r = 2GM/c^2`, where `G` is the gravitational constant, `M` is the mass of the object, and `c` is the speed of light. In this simulation, I have used the mass of the sun to calculate the radius.
 
 ### Fitting the Circle in the Window
 
-The Schwarzschild radius of a sun-mass black hole is approximately 2,960 meters. This is a very large value to try and fit into a small window. To solve this, I used an orthographic projection matrix. This matrix transforms the coordinates from world space to clip space. By setting the orthographic projection to have the same dimensions as the radius of the black hole, the large circle can be mapped to the small viewport of the window. This allows us to render the circle correctly, regardless of its actual size.
+For example, The Schwarzschild radius of a sun-mass black hole is really large. This is a very large value to try and fit into a small window. To solve this, I used an orthographic projection matrix. This matrix transforms the coordinates from world space to clip space. By setting the orthographic projection to have the same dimensions as the radius of the black hole, the large circle can be mapped to the small viewport of the window. This allows us to render the circle correctly, regardless of its actual size.
 
 Here is the code that creates the projection matrix in `src/lib.rs`:
 
