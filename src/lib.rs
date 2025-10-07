@@ -1,6 +1,6 @@
 use std::{iter, sync::Arc};
 
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec2, Vec3};
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
@@ -14,7 +14,9 @@ use winit::{
 use wasm_bindgen::prelude::*;
 
 pub mod circle;
+pub mod ray;
 use crate::circle::{Blackhole, Vertex};
+use crate::ray::Ray;
 
 pub struct State {
     surface: wgpu::Surface<'static>,
@@ -29,6 +31,10 @@ pub struct State {
     uniform_buffer: wgpu::Buffer,
     uniform_bind_group: wgpu::BindGroup,
     window: Arc<Window>,
+    rays: Vec<Ray>,
+    ray_vertex_buffer: wgpu::Buffer,
+    ray_index_buffer: wgpu::Buffer,
+    num_ray_indices: u32,
 }
 
 impl State {
@@ -180,6 +186,32 @@ impl State {
             usage: wgpu::BufferUsages::INDEX,
         });
 
+        let rays = vec![
+            Ray::new(-7000.0, 1000.0, Vec2::new(1.0, 0.0)),
+        ];
+
+        let mut ray_vertices = Vec::new();
+        let mut ray_indices = Vec::new();
+        for (i, ray) in rays.iter().enumerate() {
+            let quad_vertices = ray.to_quad_vertices(100.0);
+            ray_vertices.extend_from_slice(&quad_vertices);
+            let base_index = (i * 4) as u16;
+            ray_indices.extend_from_slice(&[base_index, base_index + 2, base_index + 1, base_index + 1, base_index + 2, base_index + 3]);
+        }
+
+        let ray_vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Ray Vertex Buffer"),
+            contents: bytemuck::cast_slice(&ray_vertices),
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+        });
+
+        let ray_index_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: Some("Ray Index Buffer"),
+            contents: bytemuck::cast_slice(&ray_indices),
+            usage: wgpu::BufferUsages::INDEX,
+        });
+        let num_ray_indices = ray_indices.len() as u32;
+
         Ok(Self {
             surface,
             device,
@@ -193,6 +225,10 @@ impl State {
             uniform_buffer,
             uniform_bind_group,
             window,
+            rays,
+            ray_vertex_buffer,
+            ray_index_buffer,
+            num_ray_indices,
         })
     }
 
@@ -212,7 +248,20 @@ impl State {
         }
     }
 
-    fn update(&mut self) {}
+    fn update(&mut self) {
+        for ray in &mut self.rays {
+            ray.step();
+        }
+        let mut ray_vertices = Vec::new();
+        for ray in &self.rays {
+            ray_vertices.extend_from_slice(&ray.to_quad_vertices(100.0));
+        }
+        self.queue.write_buffer(
+            &self.ray_vertex_buffer,
+            0,
+            bytemuck::cast_slice(&ray_vertices),
+        );
+    }
 
     fn render(&mut self) -> Result<(), wgpu::SurfaceError> {
         self.window.request_redraw();
@@ -256,6 +305,10 @@ impl State {
             render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
             render_pass.set_index_buffer(self.index_buffer.slice(..), wgpu::IndexFormat::Uint16);
             render_pass.draw_indexed(0..self.num_indices, 0, 0..1);
+
+            render_pass.set_vertex_buffer(0, self.ray_vertex_buffer.slice(..));
+            render_pass.set_index_buffer(self.ray_index_buffer.slice(..), wgpu::IndexFormat::Uint16);
+            render_pass.draw_indexed(0..self.num_ray_indices, 0, 0..1);
         }
 
         self.queue.submit(iter::once(encoder.finish()));
@@ -425,4 +478,3 @@ fn create_projection_matrix(width: u32, height: u32) -> Mat4 {
         1.0,
     )
 }
-
