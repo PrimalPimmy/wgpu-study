@@ -1,6 +1,6 @@
 use std::{iter, sync::Arc};
 
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 use wgpu::util::DeviceExt;
 use winit::{
     application::ApplicationHandler,
@@ -13,12 +13,8 @@ use winit::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-struct Vertex {
-    position: [f32; 3],
-    color: [f32; 3],
-}
+pub mod circle;
+use crate::circle::{Blackhole, Vertex};
 
 pub struct State {
     surface: wgpu::Surface<'static>,
@@ -168,7 +164,10 @@ impl State {
             cache: None,
         });
 
-        let (vertices, indices) = circle_filled_vertices(100, [1.0, 0.0, 0.0]);
+        const MASS: f64 = 1.989e30; // Mass of the sun
+        let black_hole = Blackhole::new(Vec3::new(5000.0, 0.0, 0.0), MASS);
+        let (vertices, indices) = black_hole.draw_circle(100);
+
         let vertex_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Circle Vertex Buffer"),
             contents: bytemuck::cast_slice(&vertices),
@@ -410,51 +409,9 @@ pub fn run_web() -> Result<(), wasm_bindgen::JsValue> {
     Ok(())
 }
 
-impl Vertex {
-    const ATTRIBS: [wgpu::VertexAttribute; 2] =
-        wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3];
-    fn desc() -> wgpu::VertexBufferLayout<'static> {
-        use std::mem;
-        wgpu::VertexBufferLayout {
-            array_stride: mem::size_of::<Self>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Vertex,
-            attributes: &Self::ATTRIBS,
-        }
-    }
-}
-
 const G: f64 = 6.67430e-11;
 const C: f64 = 299792458.0;
 const MASS: f64 = 1.989e30; // Mass of the sun
-
-fn circle_filled_vertices(segments: usize, color: [f32; 3]) -> (Vec<Vertex>, Vec<u16>) {
-    assert!(segments >= 3);
-    let radius = (2.0 * G * MASS) / (C * C); // Schwarzschild radius
-    let mut verts = Vec::with_capacity(segments + 1);
-    let mut indices = Vec::with_capacity(segments * 3);
-
-    verts.push(Vertex {
-        position: [0.0, 0.0, 0.0],
-        color,
-    });
-
-    for i in 0..segments {
-        let angle = 2.0 * std::f64::consts::PI * (i as f64) / (segments as f64);
-        let x = radius * angle.cos();
-        let y = radius * angle.sin();
-        verts.push(Vertex {
-            position: [x as f32, y as f32, 0.0],
-            color,
-        });
-    }
-
-    for i in 1..segments {
-        indices.extend_from_slice(&[0u16, i as u16, (i as u16) + 1]);
-    }
-    indices.extend_from_slice(&[0u16, segments as u16, 1u16]);
-
-    (verts, indices)
-}
 
 fn create_projection_matrix(width: u32, height: u32) -> Mat4 {
     let aspect_ratio = width as f32 / height as f32;
